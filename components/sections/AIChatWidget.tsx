@@ -108,7 +108,7 @@ export function AIChatWidget() {
         id:      crypto.randomUUID(),
         role:    'assistant',
         content: language === 'AF'
-          ? 'Verskoon my, ek ondervind 'n tegniese probleem. Probeer asseblief weer.'
+          ? "Verskoon my, ek ondervind 'n tegniese probleem. Probeer asseblief weer."
           : 'Sorry, I\'m experiencing a technical issue. Please try again.',
       }])
     } finally {

@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           console.error('[AI Chat] Stream error:', err)
           const errMsg = language === 'AF'
-            ? 'Verskoon my, 'n fout het voorgekom. Probeer asseblief weer.'
+            ? "Verskoon my, 'n fout het voorgekom. Probeer asseblief weer."
             : 'Sorry, an error occurred. Please try again.'
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: errMsg, model: 'error' })}\n\n`))
         }

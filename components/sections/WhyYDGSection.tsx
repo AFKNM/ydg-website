@@ -22,7 +22,7 @@ export function WhyYDGSection() {
               {[
                 { num: '01', title: 'Drie AI-modelle',  desc: 'Claude, GPT-4o, en Gemini kontroleer mekaar vir akkuraatheid en kwaliteit.' },
                 { num: '02', title: 'Live Projek-portaal', desc: 'Kliënte sien presies waar hul projek is — Kanban, mylpale, en regstreekse boodskappe.' },
-                { num: '03', title: 'Slim SEO-paneel', desc: 'Bestuur meta-tags, sitekaarte, en omleidings met AI-hulp — sonder 'n ontwikkelaar.' },
+                { num: '03', title: 'Slim SEO-paneel', desc: "Bestuur meta-tags, sitekaarte, en omleidings met AI-hulp — sonder 'n ontwikkelaar." },
                 { num: '04', title: 'YOCO-betalings', desc: 'Veilige, Suid-Afrikaanse betalingsverwerking ingebou vir dienste en produkte.' },
               ].map(item => (
                 <div key={item.num} className="flex gap-4 items-start">

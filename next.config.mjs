@@ -1,6 +1,5 @@
-import type { NextConfig } from 'next'
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.amazonaws.com' },
@@ -15,7 +14,7 @@ const nextConfig: NextConfig = {
       {
         source: '/api/:path*',
         headers: [
-          { key: 'Access-Control-Allow-Origin',  value: 'https://yourdigitalguy.co.za' },
+          { key: 'Access-Control-Allow-Origin', value: 'https://yourdigitalguy.co.za' },
           { key: 'Access-Control-Allow-Methods', value: 'GET,POST,PUT,DELETE,OPTIONS' },
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
         ],
@@ -25,7 +24,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: '/sitemap.xml', destination: '/api/sitemap' },
-      { source: '/robots.txt',  destination: '/api/robots'  },
+      { source: '/robots.txt', destination: '/api/robots' },
     ]
   },
 }
