@@ -1,0 +1,467 @@
+// YDG — Prisma Schema
+// PostgreSQL on AWS RDS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────
+
+enum Role {
+  CLIENT
+  ADMIN
+  TEAM
+}
+
+enum Language {
+  EN
+  AF
+}
+
+enum PricingType {
+  FIXED
+  QUOTE
+  SUBSCRIPTION
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  ACTIVE
+  CANCELLED
+  REFUNDED
+}
+
+enum ProjectStatus {
+  BRIEFING
+  ACTIVE
+  REVIEW
+  DONE
+  ON_HOLD
+}
+
+enum MilestoneStatus {
+  PENDING
+  ACTIVE
+  DONE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  PAST_DUE
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String
+  password      String?   // hashed, null for OAuth
+  role          Role      @default(CLIENT)
+  language      Language  @default(AF)
+  phone         String?
+  company       String?
+  vatNumber     String?
+  address       Json?     // { street, city, province, postalCode }
+  avatarUrl     String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts         Account[]
+  sessions         Session[]
+  orders           Order[]
+  projects         Project[]       @relation("ClientProjects")
+  assignedProjects Project[]       @relation("TeamProjects")
+  messages         ProjectMessage[]
+  quotes           Quote[]
+  subscriptions    Subscription[]
+  aiConversations  AIConversation[]
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+// NextAuth models
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Service Catalogue ───────────────────────────────────────────────────
+
+model ServiceCategory {
+  id          String    @id @default(uuid())
+  name        String
+  nameAF      String
+  slug        String    @unique
+  icon        String?   // Lucide icon name
+  order       Int       @default(0)
+  services    Service[]
+
+  @@map("service_categories")
+}
+
+model Service {
+  id          String          @id @default(uuid())
+  name        String
+  nameAF      String
+  description String          @db.Text
+  descriptionAF String        @db.Text
+  categoryId  String
+  pricingType PricingType
+  basePrice   Decimal?        @db.Decimal(10, 2)
+  currency    String          @default("ZAR")
+  options     Json?           // [{ name, nameAF, price, description }]
+  addOns      Json?           // [{ name, nameAF, price }]
+  slug        String          @unique
+  imageUrl    String?
+  published   Boolean         @default(false)
+  featured    Boolean         @default(false)
+  order       Int             @default(0)
+  seoMeta     Json?           // { title, description, keywords, ogImage }
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  category    ServiceCategory @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
+  quoteItems  QuoteItem[]
+
+  @@map("services")
+}
+
+// ─── Physical Products (Branding Supplies) ───────────────────────────────
+
+model Product {
+  id          String    @id @default(uuid())
+  name        String
+  nameAF      String
+  description String    @db.Text
+  slug        String    @unique
+  basePrice   Decimal   @db.Decimal(10, 2)
+  currency    String    @default("ZAR")
+  images      Json      // [{ url, alt }]
+  variants    Json      // [{ type: 'size'|'color', options: [{value, priceAdjust}] }]
+  stock       Int       @default(0)
+  published   Boolean   @default(false)
+  category    String    // 'clothing' | 'stationery' | 'accessories'
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  orderItems  OrderItem[]
+
+  @@map("products")
+}
+
+// ─── Orders ──────────────────────────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  status          OrderStatus @default(PENDING)
+  total           Decimal     @db.Decimal(10, 2)
+  currency        String      @default("ZAR")
+  yocoPaymentId   String?
+  yocoCheckoutId  String?
+  notes           String?     @db.Text
+  billingAddress  Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user     User        @relation(fields: [userId], references: [id])
+  items    OrderItem[]
+  invoice  Invoice?
+  project  Project?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  serviceId   String?
+  productId   String?
+  name        String   // snapshot
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  options     Json?    // selected options snapshot
+  createdAt   DateTime @default(now())
+
+  order   Order    @relation(fields: [orderId], references: [id])
+  service Service? @relation(fields: [serviceId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+// ─── Subscriptions ───────────────────────────────────────────────────────
+
+model Subscription {
+  id              String             @id @default(uuid())
+  userId          String
+  serviceId       String
+  status          SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  yocoSubscriptionId String?
+  amount          Decimal            @db.Decimal(10, 2)
+  interval        String             @default("monthly")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("subscriptions")
+}
+
+// ─── Invoices ────────────────────────────────────────────────────────────
+
+model Invoice {
+  id          String   @id @default(uuid())
+  orderId     String   @unique
+  number      String   @unique // YDG-2026-0001
+  pdfUrl      String?
+  issuedAt    DateTime @default(now())
+  dueAt       DateTime
+  paidAt      DateTime?
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("invoices")
+}
+
+// ─── Quotes ──────────────────────────────────────────────────────────────
+
+model Quote {
+  id          String   @id @default(uuid())
+  userId      String?
+  name        String
+  email       String
+  phone       String?
+  company     String?
+  message     String   @db.Text
+  status      String   @default("NEW") // NEW | REVIEWED | SENT | ACCEPTED | DECLINED
+  totalEst    Decimal? @db.Decimal(10, 2)
+  aiSummary   String?  @db.Text
+  proposalUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User?       @relation(fields: [userId], references: [id])
+  items QuoteItem[]
+
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id        String  @id @default(uuid())
+  quoteId   String
+  serviceId String?
+  name      String
+  priceEst  Decimal? @db.Decimal(10, 2)
+
+  quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id])
+
+  @@map("quote_items")
+}
+
+// ─── Projects (Client Portal) ────────────────────────────────────────────
+
+model Project {
+  id             String        @id @default(uuid())
+  name           String
+  clientId       String
+  teamMemberId   String?
+  orderId        String?       @unique
+  status         ProjectStatus @default(BRIEFING)
+  kanbanColumns  Json          @default("[{\"id\":\"todo\",\"title\":\"Te Doen\",\"cards\":[]},{\"id\":\"inprogress\",\"title\":\"In Proses\",\"cards\":[]},{\"id\":\"review\",\"title\":\"Hersien\",\"cards\":[]},{\"id\":\"done\",\"title\":\"Klaar\",\"cards\":[]}]")
+  embedHtml      String?       @db.Text
+  briefing       String?       @db.Text
+  startDate      DateTime?
+  dueDate        DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  client     User               @relation("ClientProjects",  fields: [clientId],     references: [id])
+  teamMember User?              @relation("TeamProjects",    fields: [teamMemberId], references: [id])
+  order      Order?             @relation(fields: [orderId], references: [id])
+  milestones ProjectMilestone[]
+  messages   ProjectMessage[]
+  files      ProjectFile[]
+
+  @@map("projects")
+}
+
+model ProjectMilestone {
+  id          String          @id @default(uuid())
+  projectId   String
+  title       String
+  description String?
+  status      MilestoneStatus @default(PENDING)
+  dueDate     DateTime
+  completedAt DateTime?
+  order       Int             @default(0)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_milestones")
+}
+
+model ProjectMessage {
+  id          String   @id @default(uuid())
+  projectId   String
+  senderId    String
+  content     String   @db.Text
+  attachments Json?    // [{ url, name, size, type }]
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sender  User    @relation(fields: [senderId], references: [id])
+
+  @@map("project_messages")
+}
+
+model ProjectFile {
+  id        String   @id @default(uuid())
+  projectId String
+  name      String
+  url       String   // S3 URL
+  size      Int
+  mimeType  String
+  uploadedAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_files")
+}
+
+// ─── Blog ─────────────────────────────────────────────────────────────────
+
+model BlogPost {
+  id          String   @id @default(uuid())
+  title       String
+  titleAF     String?
+  slug        String   @unique
+  excerpt     String
+  content     String   @db.Text
+  coverImage  String?
+  published   Boolean  @default(false)
+  publishedAt DateTime?
+  tags        String[]
+  readingTime Int?     // minutes
+  seoScore    Int?     // 0-100
+  seoMeta     Json?
+  authorId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("blog_posts")
+}
+
+// ─── SEO Management ──────────────────────────────────────────────────────
+
+model SeoSetting {
+  route           String   @id  // e.g. "/dienste/seo"
+  metaTitle       String
+  metaDescription String
+  ogImage         String?
+  schema          Json?    // Schema.org JSON-LD
+  canonicalUrl    String?
+  noIndex         Boolean  @default(false)
+  keywords        String[]
+  updatedAt       DateTime @updatedAt
+
+  @@map("seo_settings")
+}
+
+model Redirect {
+  id         String   @id @default(uuid())
+  from       String   @unique
+  to         String
+  statusCode Int      @default(301)
+  createdAt  DateTime @default(now())
+
+  @@map("redirects")
+}
+
+// ─── AI Conversations ────────────────────────────────────────────────────
+
+model AIConversation {
+  id        String   @id @default(uuid())
+  userId    String?
+  sessionId String
+  messages  Json     // [{ role, content, timestamp }]
+  model     String   // which model responded
+  language  Language @default(AF)
+  quoteId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("ai_conversations")
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
