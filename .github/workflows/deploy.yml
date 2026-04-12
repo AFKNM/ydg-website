@@ -31,7 +31,11 @@ jobs:
             git pull origin main
             npm ci --production=false
             npm run build
-            pm2 stop ydg 2>/dev/null; pm2 delete ydg 2>/dev/null
+            pm2 stop all 2>/dev/null; pm2 delete all 2>/dev/null
+            kill $(lsof -ti:3000) 2>/dev/null || true
+            sleep 2
             pm2 start node --name "ydg" --cwd /var/www/ydg-website -- server.js
             pm2 save
+            sleep 3
+            pm2 list
             echo "Deploy successful"
