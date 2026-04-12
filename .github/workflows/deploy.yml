@@ -31,6 +31,7 @@ jobs:
             git pull origin main
             npm ci --production=false
             npm run build
-            pm2 restart ydg || pm2 start npm --name "ydg" -- start
+            pm2 stop ydg 2>/dev/null; pm2 delete ydg 2>/dev/null
+            pm2 start npm --name "ydg" -- start
             pm2 save
             echo "Deploy successful"
