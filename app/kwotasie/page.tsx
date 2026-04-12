@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react'
+import { ContextualAIChat } from '@/components/sections/ContextualAIChat'
 
 const services = [
   'Google Ads',
@@ -92,8 +93,19 @@ export default function KwotasiePage() {
             <span className="text-[#0057FF]">Kwotasie Vandag.</span>
           </h1>
           <p className="text-[#8C8C8C] text-lg">
-            Geen verbintenis nie — net 'n eerlike gesprek oor wat jy nodig het.
+            Geen verbintenis nie — net ‘n eerlike gesprek oor wat jy nodig het.
           </p>
+        </div>
+
+        {/* Mini YDG helper before form */}
+        <div className="mb-8">
+          <ContextualAIChat
+            variant="banner"
+            heading="Nie seker wat om te kies nie? Vra vir Mini YDG"
+            label="Mini YDG · Jou Kwotasie-Assistent"
+            suggestions={["Wat beveel jy aan vir ‘n nuwe besigheid?", "Wat kos ‘n website?", "Verduidelik Google Ads vs SEO"]}
+            placeholder="Vra oor enige diens of begroting..."
+          />
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
@@ -188,4 +200,4 @@ export default function KwotasiePage() {
       </div>
     </main>
   )
-}
+            }
