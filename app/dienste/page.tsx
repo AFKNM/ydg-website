@@ -3,8 +3,19 @@ import { ArrowRight } from 'lucide-react'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Dienste | Your Digital Guy',
-  description: 'Volledige digitale dienste: Google Ads, SEO, META, WhatsApp, BI, API, AI, webontwikkeling en meer.',
+  title: 'Digitale Bemarkingsdienste Kaapstad | SEO, Google Ads, Webontwikkeling — YDG',
+  description: 'Professionele digitale bemarkingsdienste in Kaapstad: Google Ads, SEO, META-advertensies, webontwikkeling, AI-oplossings en meer. Kry jou gratis kwotasie by YDG.',
+  openGraph: {
+    title: 'Digitale Bemarkingsdienste | YDG — Your Digital Guy',
+    description: 'Google Ads, SEO, META-advertensies, webontwikkeling en AI-oplossings vir SA sakeondernemings. Kry \'n gratis kwotasie.',
+    url: 'https://yourdigitalguy.co.za/dienste',
+    images: [{ url: '/og-image.png', width: 1200, height: 630 }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Digitale Bemarkingsdienste | YDG',
+    description: 'Google Ads, SEO, META-advertensies, webontwikkeling en meer in Kaapstad.',
+  },
 }
 
 const services = [

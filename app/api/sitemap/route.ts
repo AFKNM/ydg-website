@@ -7,7 +7,6 @@ const staticRoutes = [
   { url: '/dienste', priority: '0.9', changefreq: 'weekly' },
   { url: '/kwotasie', priority: '0.9', changefreq: 'monthly' },
   { url: '/kontak', priority: '0.8', changefreq: 'monthly' },
-  { url: '/login', priority: '0.5', changefreq: 'never' },
 ]
 
 export async function GET() {
