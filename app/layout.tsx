@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     url: 'https://yourdigitalguy.co.za',
     siteName: 'Your Digital Guy',
     title: 'Your Digital Guy | Digitale Oplossings',
-    description: 'AI-aangedrewe digitale dienste vir die moderne sakewêreld.',
+    description: 'AI-aangedrewe digitale dienste vir die moderne sakewereld.',
     images: [{ url: '/og-image.png', width: 1200, height: 630 }],
   },
   twitter: {
@@ -52,6 +52,12 @@ export const metadata: Metadata = {
     index: true,
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+  },
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/favicon.svg',
   },
   verification: {
     google: process.env.GOOGLE_SITE_VERIFICATION ?? '',
