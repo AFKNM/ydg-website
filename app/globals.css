@@ -1,6 +1,15 @@
+/* Google Fonts — loaded in browser, not at build time */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ─── Font CSS variables (replaces next/font/google variables) ──────────── */
+:root {
+  --font-grotesk: 'Space Grotesk', system-ui, sans-serif;
+  --font-inter:   'Inter', system-ui, sans-serif;
+}
 
 /* ─── YDG Design Tokens ─────────────────────────────────────────────────── */
 :root {

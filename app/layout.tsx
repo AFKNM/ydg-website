@@ -1,22 +1,10 @@
 import type { Metadata } from 'next'
-import { Space_Grotesk, Inter } from 'next/font/google'
+// Fonts loaded via CSS @import in globals.css — avoids network fetch at build time
 import './globals.css'
 import { Providers } from '@/components/Providers'
 import { Header } from '@/components/layout/Header'
 import { Footer } from '@/components/layout/Footer'
 import { AIChatWidget } from '@/components/sections/AIChatWidget'
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  variable: '--font-grotesk',
-  weight: ['300', '400', '500', '600', '700'],
-})
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  weight: ['300', '400', '500', '600'],
-})
 
 export const metadata: Metadata = {
   title: {
@@ -70,7 +58,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="af" className={`${spaceGrotesk.variable} ${inter.variable}`}>
+    <html lang="af">
       <body className="antialiased">
         <Providers>
           <Header />
