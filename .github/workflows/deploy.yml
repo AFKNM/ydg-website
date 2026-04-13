@@ -56,13 +56,53 @@ jobs:
           script: |
             export PATH=$PATH:/usr/local/bin
             OUR_DIR=/var/www/ydg-website
-            OLD_BUILD="FO0zCOSdCWN3V-r_U6Twz"
+
+            echo "=== Pre-deploy diagnostics ==="
+            echo "--- Listening ports ---"
+            sudo ss -tlnp 2>/dev/null || sudo netstat -tlnp 2>/dev/null || true
+            echo "--- Node processes ---"
+            sudo ps aux | grep -E '\bnode\b|\bserver\.js\b' | grep -v grep || true
+            echo "--- pm2 status ---"
+            pm2 status 2>/dev/null || true
+
+            echo "=== Detect live Node.js port ==="
+            # Grab the port(s) any node/server.js process is listening on BEFORE we kill anything
+            LIVE_NODE_PORT=$(sudo ss -tlnp 2>/dev/null \
+              | grep -E 'node|server' \
+              | grep -oP '(?<=:)\d{4,5}' \
+              | grep -v '^22$\|^80$\|^443$\|^3306$\|^5432$' \
+              | head -1)
+            # Fallback: netstat
+            if [ -z "$LIVE_NODE_PORT" ]; then
+              LIVE_NODE_PORT=$(sudo netstat -tlnp 2>/dev/null \
+                | grep -E 'node|server' \
+                | grep -oE ':[0-9]{4,5} ' \
+                | grep -oE '[0-9]+' \
+                | grep -v '^22$\|^80$\|^443$' \
+                | head -1)
+            fi
+            # Fallback: use 3000
+            LIVE_NODE_PORT="${LIVE_NODE_PORT:-3000}"
+            echo "LIVE_NODE_PORT=$LIVE_NODE_PORT"
+
+            echo "=== Check .htaccess / vhost proxy config ==="
+            sudo find /home /var/www -maxdepth 5 -name ".htaccess" 2>/dev/null \
+              | xargs sudo grep -l "ProxyPass\|PassengerPort\|proxy_pass\|node" 2>/dev/null \
+              | head -3 \
+              | while read f; do echo "=== $f ==="; sudo cat "$f"; done || true
+
+            echo "=== LiteSpeed virtualhost configs ==="
+            sudo find /usr/local/lsws/conf -name "*.conf" 2>/dev/null | head -5 \
+              | xargs sudo grep -l "proxy\|extapp\|node\|3000\|8080" 2>/dev/null \
+              | head -3 \
+              | while read f; do echo "=== $f ==="; sudo head -80 "$f"; done || true
 
             echo "=== Install prod deps in our dir ==="
             cd "$OUR_DIR"
             npm ci --omit=dev 2>/dev/null || npm install --production 2>/dev/null || true
 
-            echo "=== Find the live app dir via old BUILD_ID ==="
+            echo "=== Find the live app dir via BUILD_ID ==="
+            OLD_BUILD="FO0zCOSdCWN3V-r_U6Twz"
             LIVE_BUILD=$(sudo find /home /var/www -name "BUILD_ID" 2>/dev/null \
               | xargs sudo grep -l "$OLD_BUILD" 2>/dev/null | head -1)
 
@@ -77,7 +117,7 @@ jobs:
                   --exclude='node_modules' \
                   "$OUR_DIR/" "$LIVE_APP/"
 
-                echo "=== Killing the live process so it picks up new code ==="
+                echo "=== Killing the live process in $LIVE_APP ==="
                 for pid in $(sudo pgrep -f "server.js" 2>/dev/null); do
                   CWD=$(sudo readlink -f /proc/$pid/cwd 2>/dev/null)
                   if [ "$CWD" = "$LIVE_APP" ]; then
@@ -85,27 +125,45 @@ jobs:
                     sudo kill -TERM "$pid" || true
                   fi
                 done
-                sleep 5
+                sleep 3
               else
                 echo "Live app IS our dir ($OUR_DIR) — no extra rsync needed"
               fi
             else
-              echo "OLD BUILD_ID not found on disk — live app might already be our dir"
+              echo "OLD BUILD_ID not found — live app dir might already be our dir"
             fi
 
-            echo "=== Also restart/start pm2 from our dir as fallback ==="
+            echo "=== Stop existing processes and free the port ==="
             pm2 stop all 2>/dev/null || true
             pm2 delete all 2>/dev/null || true
+            # Kill anything on LIVE_NODE_PORT and on 3000
+            sudo fuser -k "${LIVE_NODE_PORT}/tcp" 2>/dev/null || true
             sudo fuser -k 3000/tcp 2>/dev/null || true
-            sleep 2
-            pm2 start "$OUR_DIR/server.js" --name ydg --cwd "$OUR_DIR"
+            sleep 3
+
+            echo "=== Start app on detected port: PORT=$LIVE_NODE_PORT ==="
+            PORT=$LIVE_NODE_PORT pm2 start "$OUR_DIR/server.js" \
+              --name ydg \
+              --cwd "$OUR_DIR" \
+              -- --port "$LIVE_NODE_PORT" 2>/dev/null || \
+            PORT=$LIVE_NODE_PORT pm2 start "$OUR_DIR/server.js" \
+              --name ydg \
+              --cwd "$OUR_DIR"
             pm2 save
 
             echo "=== Verify ==="
-            sleep 5
+            sleep 6
             pm2 status
             NEW_BUILD=$(cat "$OUR_DIR/.next/BUILD_ID" 2>/dev/null || echo "unknown")
             echo "Our build ID: $NEW_BUILD"
-            curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" http://localhost:3000/ || true
+            echo "Testing port $LIVE_NODE_PORT..."
+            curl -s -o /dev/null -w "HTTP %{http_code} on :${LIVE_NODE_PORT}\n" \
+              "http://localhost:${LIVE_NODE_PORT}/" || true
+            echo "Testing port 3000..."
+            curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" \
+              "http://localhost:3000/" || true
+
+            echo "=== pm2 logs (last 30 lines) ==="
+            pm2 logs --nostream --lines 30 2>/dev/null || true
 
             echo "DEPLOY_COMPLETE"
