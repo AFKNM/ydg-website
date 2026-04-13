@@ -25,56 +25,90 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 12m
+          command_timeout: 15m
           script: |
             export PATH=$PATH:/usr/local/bin
 
-            APP_DIR=/var/www/ydg-website
-            LOG="$APP_DIR/public/deploy.log.txt"
+            OUR_DIR=/var/www/ydg-website
 
-            # Stream all output to the public dir so we can read it via the browser
-            {
-              echo "=== DEPLOY START $(date) ==="
-              echo "=== Node: $(node -v) npm: $(npm -v) ==="
+            echo "=== Step 1: Update our repo ==="
+            cd "$OUR_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+            git log --oneline -3
 
-              echo "=== [1] git pull ==="
-              cd "$APP_DIR"
-              git fetch origin main 2>&1 || true
-              git reset --hard origin/main 2>&1
-              git log --oneline -3
+            echo "=== Step 2: Find the LIVE app dir via BUILD_ID ==="
+            # The live site has buildId FO0zCOSdCWN3V-r_U6Twz — find where that .next/BUILD_ID is
+            LIVE_BUILD_FILE=$(sudo find /home /var /opt -name "BUILD_ID" 2>/dev/null \
+              | sudo xargs grep -l "FO0zCOSdCWN3V-r_U6Twz" 2>/dev/null | head -1)
 
-              echo "=== [2] npm ci ==="
-              npm ci 2>&1
-              echo "npm ci exit: $?"
+            if [ -n "$LIVE_BUILD_FILE" ]; then
+              # .next/BUILD_ID -> .next -> app root
+              LIVE_APP=$(dirname $(dirname "$LIVE_BUILD_FILE"))
+              echo "LIVE APP DIR FOUND: $LIVE_APP"
+            else
+              # Fallback: check common cPanel paths for server.js
+              LIVE_APP=""
+              for candidate in \
+                /home/ubuntu/yourdigitalguy.co.za \
+                /home/ubuntu/public_html \
+                /home/ubuntu/app \
+                /home/ubuntu/ydg \
+                /home/ubuntu/website \
+                /home/ubuntu/nodejs; do
+                if [ -f "$candidate/server.js" ] || [ -f "$candidate/package.json" ]; then
+                  LIVE_APP="$candidate"
+                  echo "FOUND via path scan: $LIVE_APP"
+                  break
+                fi
+              done
+            fi
 
-              echo "=== [2b] prisma generate ==="
-              npx prisma generate 2>&1 || echo "prisma generate failed (ok if db not needed)"
+            if [ -z "$LIVE_APP" ]; then
+              echo "ERROR: Could not determine live app dir!"
+              echo "=== All package.json locations ==="
+              sudo find /home -name "package.json" 2>/dev/null | grep -v node_modules | head -20
+              echo "=== All server.js locations ==="
+              sudo find /home /var/www -name "server.js" 2>/dev/null | grep -v node_modules | head -20
+              exit 1
+            fi
 
-              echo "=== [3] npm run build ==="
-              npm run build 2>&1
-              BUILD_EXIT=$?
-              echo "BUILD EXIT CODE: $BUILD_EXIT"
+            echo "=== Step 3: Install deps + build in $LIVE_APP ==="
+            # Rsync our updated code to the live app dir (preserve node_modules)
+            sudo rsync -av --exclude='.next' --exclude='node_modules' --exclude='.git' \
+              "$OUR_DIR/" "$LIVE_APP/"
 
-              if [ "$BUILD_EXIT" -ne 0 ]; then
-                echo "BUILD FAILED — not restarting pm2"
-                echo "=== DEPLOY FAILED $(date) ==="
-                exit "$BUILD_EXIT"
+            cd "$LIVE_APP"
+            sudo npm ci
+            sudo npx prisma generate 2>/dev/null || true
+            sudo npm run build
+
+            echo "=== Step 4: Restart the Node.js process ==="
+            # Find and restart the Node.js process for this app
+            for pid in $(sudo pgrep -f "server.js" 2>/dev/null); do
+              CWD=$(sudo readlink -f /proc/$pid/cwd 2>/dev/null)
+              echo "PID=$pid CWD=$CWD"
+              if [ "$CWD" = "$LIVE_APP" ]; then
+                echo "Sending SIGTERM to PID $pid"
+                sudo kill -SIGTERM "$pid" 2>/dev/null || true
               fi
+            done
 
-              echo "=== [4] restart pm2 ==="
-              pm2 stop all 2>/dev/null || true
-              pm2 delete all 2>/dev/null || true
-              sudo fuser -k 3000/tcp 2>/dev/null || true
-              sleep 2
-              pm2 start "$APP_DIR/server.js" --name ydg --cwd "$APP_DIR"
-              pm2 save
+            # Also try pm2 restart in case pm2 manages the process
+            pm2 stop all 2>/dev/null || true
+            pm2 delete all 2>/dev/null || true
+            sleep 3
 
-              echo "=== [5] verify ==="
-              sleep 4
-              pm2 status
-              curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" http://localhost:3000/ || echo "not yet responding"
+            # Start via pm2 from the live app dir
+            pm2 start "$LIVE_APP/server.js" --name ydg --cwd "$LIVE_APP"
+            pm2 save
 
-              echo "=== DEPLOY SUCCESS $(date) ==="
-            } 2>&1 | tee "$LOG"
+            echo "=== Step 5: Verify ==="
+            sleep 5
+            pm2 status
+            # Check what port it's on
+            sudo ss -tlnp | grep node || true
+            curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" http://localhost:3000/ || true
 
-            echo "Log written to $LOG — readable at /deploy.log.txt"
+            echo "LIVE_APP=$LIVE_APP"
+            echo "DEPLOY_COMPLETE"
