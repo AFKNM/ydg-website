@@ -52,118 +52,128 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 8m
+          command_timeout: 10m
           script: |
             export PATH=$PATH:/usr/local/bin
             OUR_DIR=/var/www/ydg-website
+            NEW_BUILD=$(cat "$OUR_DIR/.next/BUILD_ID" 2>/dev/null || echo "unknown")
+            echo "=== New build ID to deploy: $NEW_BUILD ==="
 
-            echo "=== Pre-deploy diagnostics ==="
-            echo "--- Listening ports ---"
+            echo "=== All Node.js processes (before anything) ==="
+            sudo ps aux | grep -E '\bnode\b' | grep -v grep || echo "none found"
+
+            echo "=== All listening ports (before anything) ==="
             sudo ss -tlnp 2>/dev/null || sudo netstat -tlnp 2>/dev/null || true
-            echo "--- Node processes ---"
-            sudo ps aux | grep -E '\bnode\b|\bserver\.js\b' | grep -v grep || true
-            echo "--- pm2 status ---"
-            pm2 status 2>/dev/null || true
 
-            echo "=== Detect live Node.js port ==="
-            # Grab the port(s) any node/server.js process is listening on BEFORE we kill anything
-            LIVE_NODE_PORT=$(sudo ss -tlnp 2>/dev/null \
-              | grep -E 'node|server' \
-              | grep -oP '(?<=:)\d{4,5}' \
-              | grep -v '^22$\|^80$\|^443$\|^3306$\|^5432$' \
-              | head -1)
-            # Fallback: netstat
-            if [ -z "$LIVE_NODE_PORT" ]; then
-              LIVE_NODE_PORT=$(sudo netstat -tlnp 2>/dev/null \
-                | grep -E 'node|server' \
-                | grep -oE ':[0-9]{4,5} ' \
-                | grep -oE '[0-9]+' \
-                | grep -v '^22$\|^80$\|^443$' \
-                | head -1)
-            fi
-            # Fallback: use 3000
-            LIVE_NODE_PORT="${LIVE_NODE_PORT:-3000}"
-            echo "LIVE_NODE_PORT=$LIVE_NODE_PORT"
+            echo "=== Detect LIVE app directory from running process CWD ==="
+            LIVE_CWD=""
+            for pid in $(sudo pgrep -f "node" 2>/dev/null); do
+              CWD=$(sudo readlink -f /proc/$pid/cwd 2>/dev/null)
+              CMD=$(sudo cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ' | cut -c1-120)
+              echo "  PID=$pid CWD=$CWD CMD=$CMD"
+              # Prefer process running server.js or similar
+              if echo "$CMD" | grep -qiE 'server\.js|next|node_modules/.bin'; then
+                LIVE_CWD="$CWD"
+                LIVE_PID="$pid"
+                echo "  --> Selected as LIVE process"
+              fi
+            done
+            echo "LIVE_CWD=$LIVE_CWD"
+            echo "LIVE_PID=$LIVE_PID"
 
-            echo "=== Check .htaccess / vhost proxy config ==="
-            sudo find /home /var/www -maxdepth 5 -name ".htaccess" 2>/dev/null \
-              | xargs sudo grep -l "ProxyPass\|PassengerPort\|proxy_pass\|node" 2>/dev/null \
-              | head -3 \
-              | while read f; do echo "=== $f ==="; sudo cat "$f"; done || true
+            echo "=== Check .htaccess for proxy/passenger config ==="
+            sudo find /home /var/www -maxdepth 6 -name ".htaccess" 2>/dev/null \
+              | xargs sudo grep -l "Proxy\|Passenger\|node\|3000\|PORT" 2>/dev/null \
+              | while read f; do
+                echo "--- $f ---"
+                sudo cat "$f"
+              done || true
 
-            echo "=== LiteSpeed virtualhost configs ==="
-            sudo find /usr/local/lsws/conf -name "*.conf" 2>/dev/null | head -5 \
-              | xargs sudo grep -l "proxy\|extapp\|node\|3000\|8080" 2>/dev/null \
-              | head -3 \
-              | while read f; do echo "=== $f ==="; sudo head -80 "$f"; done || true
+            echo "=== Look for cPanel Node.js app descriptor ==="
+            sudo find /home -maxdepth 5 \( -name "*.yaml" -o -name "nodejsapp.yaml" -o -name "app.yaml" \) 2>/dev/null \
+              | xargs sudo grep -l "node\|ruby\|passenger" 2>/dev/null \
+              | head -5 \
+              | while read f; do echo "--- $f ---"; sudo cat "$f"; done || true
 
-            echo "=== Install prod deps in our dir ==="
+            echo "=== Install prod deps ==="
             cd "$OUR_DIR"
             npm ci --omit=dev 2>/dev/null || npm install --production 2>/dev/null || true
 
-            echo "=== Find the live app dir via BUILD_ID ==="
-            OLD_BUILD="FO0zCOSdCWN3V-r_U6Twz"
-            LIVE_BUILD=$(sudo find /home /var/www -name "BUILD_ID" 2>/dev/null \
-              | xargs sudo grep -l "$OLD_BUILD" 2>/dev/null | head -1)
+            echo "=== Deploy to LIVE_CWD (if different from OUR_DIR) ==="
+            if [ -n "$LIVE_CWD" ] && [ "$LIVE_CWD" != "$OUR_DIR" ]; then
+              echo "Live dir ($LIVE_CWD) != our dir ($OUR_DIR) — rsyncing new build there"
+              sudo rsync -a --delete \
+                --exclude='.git' \
+                --exclude='node_modules' \
+                "$OUR_DIR/" "$LIVE_CWD/"
+              # Also install prod deps in live dir
+              (cd "$LIVE_CWD" && sudo -u "$(stat -c '%U' "$LIVE_CWD")" npm ci --omit=dev 2>/dev/null) || true
+              echo "Live dir updated. New BUILD_ID there: $(cat $LIVE_CWD/.next/BUILD_ID 2>/dev/null)"
 
-            if [ -n "$LIVE_BUILD" ]; then
-              LIVE_APP=$(dirname "$(dirname "$LIVE_BUILD")")
-              echo "LIVE APP FOUND: $LIVE_APP"
+              echo "=== Try Passenger restart (touch tmp/restart.txt) ==="
+              sudo mkdir -p "$LIVE_CWD/tmp" && sudo touch "$LIVE_CWD/tmp/restart.txt" || true
 
-              if [ "$LIVE_APP" != "$OUR_DIR" ]; then
-                echo "=== Rsyncing our build into live app dir: $LIVE_APP ==="
-                sudo rsync -a --delete \
-                  --exclude='.git' \
-                  --exclude='node_modules' \
-                  "$OUR_DIR/" "$LIVE_APP/"
-
-                echo "=== Killing the live process in $LIVE_APP ==="
-                for pid in $(sudo pgrep -f "server.js" 2>/dev/null); do
-                  CWD=$(sudo readlink -f /proc/$pid/cwd 2>/dev/null)
-                  if [ "$CWD" = "$LIVE_APP" ]; then
-                    echo "Killing PID $pid (cwd=$LIVE_APP)"
-                    sudo kill -TERM "$pid" || true
-                  fi
-                done
-                sleep 3
-              else
-                echo "Live app IS our dir ($OUR_DIR) — no extra rsync needed"
+              echo "=== Kill the live process so cPanel/Passenger can restart it ==="
+              if [ -n "$LIVE_PID" ]; then
+                echo "Killing LIVE_PID=$LIVE_PID"
+                sudo kill -TERM $LIVE_PID 2>/dev/null || true
               fi
+              sleep 5
+              # Kill anything still on the live port
+              LIVE_PORT=$(sudo ss -tlnp 2>/dev/null | grep "node\|server" | grep -oP '(?<=:)\d+' | head -1)
+              if [ -n "$LIVE_PORT" ]; then
+                sudo fuser -k "${LIVE_PORT}/tcp" 2>/dev/null || true
+              fi
+              sleep 3
+
+              echo "=== Start pm2 from LIVE_CWD on same port ==="
+              LIVE_PORT="${LIVE_PORT:-3000}"
+              pm2 stop all 2>/dev/null || true
+              pm2 delete all 2>/dev/null || true
+              PORT=$LIVE_PORT pm2 start "$LIVE_CWD/server.js" \
+                --name ydg \
+                --cwd "$LIVE_CWD"
+              pm2 save
+
             else
-              echo "OLD BUILD_ID not found — live app dir might already be our dir"
+              echo "Live dir IS our dir (or not found) — restarting pm2 from OUR_DIR"
+
+              echo "=== Stop all processes and free ports ==="
+              pm2 stop all 2>/dev/null || true
+              pm2 delete all 2>/dev/null || true
+              # Kill all node processes serving web traffic
+              for pid in $(sudo pgrep -f "node.*server" 2>/dev/null); do
+                sudo kill -TERM $pid 2>/dev/null || true
+              done
+              sudo fuser -k 3000/tcp 2>/dev/null || true
+              sudo fuser -k 8080/tcp 2>/dev/null || true
+              sleep 3
+
+              echo "=== Start pm2 from OUR_DIR ==="
+              pm2 start "$OUR_DIR/server.js" \
+                --name ydg \
+                --cwd "$OUR_DIR"
+              pm2 save
             fi
 
-            echo "=== Stop existing processes and free the port ==="
-            pm2 stop all 2>/dev/null || true
-            pm2 delete all 2>/dev/null || true
-            # Kill anything on LIVE_NODE_PORT and on 3000
-            sudo fuser -k "${LIVE_NODE_PORT}/tcp" 2>/dev/null || true
-            sudo fuser -k 3000/tcp 2>/dev/null || true
-            sleep 3
-
-            echo "=== Start app on detected port: PORT=$LIVE_NODE_PORT ==="
-            PORT=$LIVE_NODE_PORT pm2 start "$OUR_DIR/server.js" \
-              --name ydg \
-              --cwd "$OUR_DIR" \
-              -- --port "$LIVE_NODE_PORT" 2>/dev/null || \
-            PORT=$LIVE_NODE_PORT pm2 start "$OUR_DIR/server.js" \
-              --name ydg \
-              --cwd "$OUR_DIR"
-            pm2 save
-
             echo "=== Verify ==="
-            sleep 6
+            sleep 8
             pm2 status
-            NEW_BUILD=$(cat "$OUR_DIR/.next/BUILD_ID" 2>/dev/null || echo "unknown")
-            echo "Our build ID: $NEW_BUILD"
-            echo "Testing port $LIVE_NODE_PORT..."
-            curl -s -o /dev/null -w "HTTP %{http_code} on :${LIVE_NODE_PORT}\n" \
-              "http://localhost:${LIVE_NODE_PORT}/" || true
-            echo "Testing port 3000..."
-            curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" \
-              "http://localhost:3000/" || true
+            NEW_BUILD_CHECK=$(cat "$OUR_DIR/.next/BUILD_ID" 2>/dev/null || echo "unknown")
+            echo "Our build ID: $NEW_BUILD_CHECK"
 
-            echo "=== pm2 logs (last 30 lines) ==="
-            pm2 logs --nostream --lines 30 2>/dev/null || true
+            # Test whichever ports are now listening
+            for port in 3000 8080 3001; do
+              result=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/" 2>/dev/null || echo "0")
+              if [ "$result" != "0" ]; then
+                echo "HTTP $result on :$port"
+                # Also check if it's our new build
+                build_resp=$(curl -s "http://localhost:$port/" 2>/dev/null | grep -o '"buildId":"[^"]*"' | head -1 || echo "")
+                echo "  buildId in response: $build_resp"
+              fi
+            done
+
+            echo "=== pm2 logs (last 20 lines) ==="
+            pm2 logs --nostream --lines 20 2>/dev/null || true
 
             echo "DEPLOY_COMPLETE"
