@@ -38,7 +38,10 @@ jobs:
             git log --oneline -3
 
             echo "=== [2/5] Install dependencies ==="
-            npm ci --prefer-offline
+            npm ci
+
+            echo "=== [2b] Generate Prisma client ==="
+            npx prisma generate || true
 
             echo "=== [3/5] Build Next.js app ==="
             npm run build
