@@ -27,15 +27,30 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             export PATH=$PATH:/usr/local/bin
+            echo "=== PORT 80 PROCESSES ==="
+            sudo lsof -i:80 2>/dev/null || ss -tlnp | grep ':80'
+            echo "=== PORT 3000 PROCESSES ==="
+            sudo lsof -i:3000 2>/dev/null || ss -tlnp | grep ':3000'
+            echo "=== ALL NODE PROCESSES ==="
+            ps aux | grep -E '[n]ode|[l]itespeed|[a]pache' | head -20
+            echo "=== SERVER.JS FILES ==="
+            find /home -name "server.js" 2>/dev/null | grep -v node_modules | head -10
+            find /var/www -name "server.js" 2>/dev/null | grep -v node_modules | head -10
+            echo "=== PACKAGE.JSON LOCATIONS ==="
+            find /home -maxdepth 4 -name "package.json" 2>/dev/null | grep -v node_modules | head -10
+            echo "=== NGINX STATUS ==="
+            sudo nginx -t 2>&1 || true
+            sudo systemctl status nginx 2>/dev/null | head -5 || true
+            echo "=== LITESPEED STATUS ==="
+            sudo systemctl status lsws 2>/dev/null | head -5 || true
+            sudo systemctl status litespeed 2>/dev/null | head -5 || true
+            echo "=== NGINX SITES-ENABLED ==="
+            ls /etc/nginx/sites-enabled/ 2>/dev/null || echo "no nginx sites-enabled"
+            echo "=== HOME DIRS ==="
+            ls /home/ 2>/dev/null
+            ls /home/ubuntu/ 2>/dev/null | head -20
+            echo "=== CURRENT REPO STATE ==="
             cd /var/www/ydg-website
             git pull origin main
-            npm ci --production=false
-            npm run build
-            pm2 stop all 2>/dev/null; pm2 delete all 2>/dev/null
-            kill $(lsof -ti:3000) 2>/dev/null || true
-            sleep 2
-            pm2 start node --name "ydg" --cwd /var/www/ydg-website -- server.js
-            pm2 save
-            sleep 3
-            pm2 list
-            echo "Deploy successful"
+            git log --oneline -3
+            echo "DIAGNOSTIC_COMPLETE"
