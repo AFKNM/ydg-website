@@ -2,6 +2,8 @@ import { auth } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import Link from 'next/link'
+
+export const dynamic = 'force-dynamic'
 import { FolderOpen, ShoppingBag, FileText, ArrowRight, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
 
 export default async function PortalPage() {
