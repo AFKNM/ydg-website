@@ -25,63 +25,40 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 10m
           script: |
             export PATH=$PATH:/usr/local/bin
-            DIAG=/tmp/ydg_diag.txt
+            set -e
 
-            {
-              echo "=== DATE ==="
-              date
-              echo "=== PORT 80 PROCESSES ==="
-              sudo lsof -i:80 2>/dev/null || ss -tlnp | grep ':80'
-              echo "=== PORT 3000 PROCESSES ==="
-              sudo lsof -i:3000 2>/dev/null || ss -tlnp | grep ':3000'
-              echo "=== ALL NODE/LITESPEED PROCESSES ==="
-              ps aux | grep -E '[n]ode|[l]itespeed|[a]pache|[p]assenger' | head -20
-              echo "=== SERVER.JS FILES ==="
-              find /home -name "server.js" 2>/dev/null | grep -v node_modules | head -20
-              find /var/www -name "server.js" 2>/dev/null | grep -v node_modules | head -10
-              echo "=== PACKAGE.JSON LOCATIONS ==="
-              find /home -maxdepth 5 -name "package.json" 2>/dev/null | grep -v node_modules | head -20
-              find /var/www -maxdepth 5 -name "package.json" 2>/dev/null | grep -v node_modules | head -10
-              echo "=== HOME DIR TREE (depth 3) ==="
-              find /home -maxdepth 3 -type d 2>/dev/null | grep -v node_modules | grep -v '.next' | head -40
-              echo "=== LITESPEED CONFIG DIR ==="
-              ls /usr/local/lsws/ 2>/dev/null || echo "no /usr/local/lsws"
-              ls /usr/local/lsws/conf/ 2>/dev/null || true
-              echo "=== LITESPEED VHOSTS ==="
-              ls /usr/local/lsws/conf/vhosts/ 2>/dev/null || echo "no vhosts dir"
-              find /usr/local/lsws -name "*.conf" 2>/dev/null | grep -v 'backup\|bak' | head -20
-              echo "=== LITESPEED HTTPD CONFIG (first 80 lines) ==="
-              sudo cat /usr/local/lsws/conf/httpd_config.conf 2>/dev/null | head -80 || echo "cannot read httpd_config.conf"
-              echo "=== VHOST CONF CONTENTS ==="
-              for f in $(ls /usr/local/lsws/conf/vhosts/ 2>/dev/null); do
-                echo "--- vhost: $f ---"
-                sudo cat /usr/local/lsws/conf/vhosts/$f/vhconf.conf 2>/dev/null | head -40 || true
-              done
-              echo "=== CPANEL USER DIRS ==="
-              ls /var/cpanel/users/ 2>/dev/null | head -20 || echo "no /var/cpanel/users"
-              ls /var/cpanel/ 2>/dev/null | head -20 || echo "no /var/cpanel"
-              echo "=== CPANEL NODEJS APPS ==="
-              find /home -name ".cpanel" -type d 2>/dev/null | head -10
-              find /home -name "nodejs" -type d 2>/dev/null | head -10
-              find /home -path "*node_modules/.bin/node" 2>/dev/null | head -5
-              echo "=== NGINX SITES ==="
-              ls /etc/nginx/sites-enabled/ 2>/dev/null || echo "no nginx sites-enabled"
-              ls /etc/nginx/sites-available/ 2>/dev/null || echo "no nginx sites-available"
-              echo "=== CURRENT REPO ==="
-              cd /var/www/ydg-website
-              git pull origin main
-              git log --oneline -3
-              echo "=== DONE ==="
-            } > $DIAG 2>&1
+            APP_DIR=/var/www/ydg-website
 
-            # Copy to every plausible web-accessible location
-            sudo cp $DIAG /var/www/html/ydg_diag.txt 2>/dev/null || true
-            sudo cp $DIAG /var/www/ydg-website/public/ydg_diag.txt 2>/dev/null || true
-            sudo cp $DIAG /home/ubuntu/public_html/ydg_diag.txt 2>/dev/null || true
-            sudo cp $DIAG /usr/local/lsws/Example/html/ydg_diag.txt 2>/dev/null || true
+            echo "=== [1/5] Pull latest code ==="
+            cd "$APP_DIR"
+            git pull origin main
+            git log --oneline -3
 
-            # Print to Actions log too
-            cat $DIAG
-            echo "DIAGNOSTIC_COMPLETE"
+            echo "=== [2/5] Install dependencies ==="
+            npm ci --prefer-offline
+
+            echo "=== [3/5] Build Next.js app ==="
+            npm run build
+
+            echo "=== [4/5] Restart server via pm2 ==="
+            # Stop any existing pm2 processes cleanly
+            pm2 stop all 2>/dev/null || true
+            pm2 delete all 2>/dev/null || true
+
+            # Kill anything still on port 3000
+            sudo fuser -k 3000/tcp 2>/dev/null || true
+            sleep 2
+
+            # Start fresh from the correct directory
+            pm2 start "$APP_DIR/server.js" --name ydg --cwd "$APP_DIR"
+            pm2 save
+
+            echo "=== [5/5] Verify process is up ==="
+            sleep 3
+            pm2 status
+            curl -s -o /dev/null -w "HTTP %{http_code} on port 3000\n" http://localhost:3000/ || echo "port 3000 not responding yet"
+
+            echo "DEPLOY_COMPLETE"
