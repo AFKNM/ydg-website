@@ -25,43 +25,56 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 12m
           script: |
             export PATH=$PATH:/usr/local/bin
-            set -e
 
             APP_DIR=/var/www/ydg-website
+            LOG="$APP_DIR/public/deploy.log.txt"
 
-            echo "=== [1/5] Pull latest code ==="
-            cd "$APP_DIR"
-            git pull origin main
-            git log --oneline -3
+            # Stream all output to the public dir so we can read it via the browser
+            {
+              echo "=== DEPLOY START $(date) ==="
+              echo "=== Node: $(node -v) npm: $(npm -v) ==="
 
-            echo "=== [2/5] Install dependencies ==="
-            npm ci
+              echo "=== [1] git pull ==="
+              cd "$APP_DIR"
+              git fetch origin main 2>&1 || true
+              git reset --hard origin/main 2>&1
+              git log --oneline -3
 
-            echo "=== [2b] Generate Prisma client ==="
-            npx prisma generate || true
+              echo "=== [2] npm ci ==="
+              npm ci 2>&1
+              echo "npm ci exit: $?"
 
-            echo "=== [3/5] Build Next.js app ==="
-            npm run build
+              echo "=== [2b] prisma generate ==="
+              npx prisma generate 2>&1 || echo "prisma generate failed (ok if db not needed)"
 
-            echo "=== [4/5] Restart server via pm2 ==="
-            # Stop any existing pm2 processes cleanly
-            pm2 stop all 2>/dev/null || true
-            pm2 delete all 2>/dev/null || true
+              echo "=== [3] npm run build ==="
+              npm run build 2>&1
+              BUILD_EXIT=$?
+              echo "BUILD EXIT CODE: $BUILD_EXIT"
 
-            # Kill anything still on port 3000
-            sudo fuser -k 3000/tcp 2>/dev/null || true
-            sleep 2
+              if [ "$BUILD_EXIT" -ne 0 ]; then
+                echo "BUILD FAILED — not restarting pm2"
+                echo "=== DEPLOY FAILED $(date) ==="
+                exit "$BUILD_EXIT"
+              fi
 
-            # Start fresh from the correct directory
-            pm2 start "$APP_DIR/server.js" --name ydg --cwd "$APP_DIR"
-            pm2 save
+              echo "=== [4] restart pm2 ==="
+              pm2 stop all 2>/dev/null || true
+              pm2 delete all 2>/dev/null || true
+              sudo fuser -k 3000/tcp 2>/dev/null || true
+              sleep 2
+              pm2 start "$APP_DIR/server.js" --name ydg --cwd "$APP_DIR"
+              pm2 save
 
-            echo "=== [5/5] Verify process is up ==="
-            sleep 3
-            pm2 status
-            curl -s -o /dev/null -w "HTTP %{http_code} on port 3000\n" http://localhost:3000/ || echo "port 3000 not responding yet"
+              echo "=== [5] verify ==="
+              sleep 4
+              pm2 status
+              curl -s -o /dev/null -w "HTTP %{http_code} on :3000\n" http://localhost:3000/ || echo "not yet responding"
 
-            echo "DEPLOY_COMPLETE"
+              echo "=== DEPLOY SUCCESS $(date) ==="
+            } 2>&1 | tee "$LOG"
+
+            echo "Log written to $LOG — readable at /deploy.log.txt"
