@@ -16,17 +16,26 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-// ─── Clients ──────────────────────────────────────────────────────────────────
+// ─── Lazy Clients (safe at build time — only instantiated on first use) ───────
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-})
+let _anthropic: Anthropic | undefined
+let _openai: OpenAI | undefined
+let _gemini: GoogleGenerativeAI | undefined
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-})
+function getAnthropic(): Anthropic {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+  return _anthropic
+}
 
-const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+function getOpenAI(): OpenAI {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+  return _openai
+}
+
+function getGemini(): GoogleGenerativeAI {
+  if (!_gemini) _gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+  return _gemini
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,7 +136,7 @@ async function callClaude(
   systemPrompt: string,
   maxTokens = 800,
 ): Promise<string> {
-  const response = await anthropic.messages.create({
+  const response = await getAnthropic().messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: maxTokens,
     system: systemPrompt,
@@ -149,7 +158,7 @@ async function callGPT4o(
   systemPrompt: string,
   maxTokens = 800,
 ): Promise<string> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     max_tokens: maxTokens,
     messages: [
@@ -167,7 +176,7 @@ async function callGemini(
   messages: AIMessage[],
   systemPrompt: string,
 ): Promise<string> {
-  const model = gemini.getGenerativeModel({
+  const model = getGemini().getGenerativeModel({
     model: 'gemini-1.5-pro',
     systemInstruction: systemPrompt,
   })
@@ -271,7 +280,7 @@ export async function* chatStream(options: ChatOptions): AsyncGenerator<string> 
 
   // Stream Claude; if it fails, fall back to GPT-4o stream
   try {
-    const stream = anthropic.messages.stream({
+    const stream = getAnthropic().messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: maxTokens,
       system: systemPrompt,
@@ -292,7 +301,7 @@ export async function* chatStream(options: ChatOptions): AsyncGenerator<string> 
   } catch (err) {
     console.warn('[YDG AI] Claude stream failed — falling back to GPT-4o stream')
 
-    const stream = await openai.chat.completions.create({
+    const stream = await getOpenAI().chat.completions.create({
       model: 'gpt-4o',
       max_tokens: maxTokens,
       stream: true,
